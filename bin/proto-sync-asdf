@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Ensure the script exits if a command fails unexpectedly
-set -e
-
 # Check if .tool-versions exists in the current directory
 if [ ! -f .tool-versions ]; then
   echo "❌ Error: No .tool-versions file found in the current working directory."
@@ -28,46 +25,50 @@ while read -r tool version || [ -n "$tool" ]; do
     tool="node"
   fi
 
-  # Determine if the tool is a native built-in or a custom plugin
-  if [[ $BUILT_INS =~ (^|[[:space:]])$tool($|[[:space:]]) ]]; then
-    echo "  -> Pinning native built-in: $tool to $version"
-    proto pin "$tool" "$version"
-  else
-    echo "  -> Mapping & pinning custom tool via built-in ASDF backend: $tool to $version"
-    
-    # Pin using the asdf: identifier
-    proto pin "asdf:$tool" "$version"
+  # -------------------------------------------------------------------------
+  # RESILIENT EXECUTION BLOCK
+  # Using a subshell container to trap and isolate tool-specific failures
+  # -------------------------------------------------------------------------
+  (
+    # Re-enable exit-on-error *only* inside this subshell so a failure here
+    # jumps straight to the local error handler instead of running the remaining subshell lines.
+    set -e
 
-    # Specific override for adr-tools shim naming
-    if [ "$tool" = "adr-tools" ] && ! grep -q "\[tools\.\"asdf:$tool\"\]" .prototools; then
-      echo -e "\n[tools.\"asdf:$tool\"]\nexes = [\"adr\"]" >> .prototools
-    fi
+    if [[ $BUILT_INS =~ (^|[[:space:]])$tool($|[[:space:]]) ]]; then
+      echo "  -> Pinning native built-in: $tool to $version"
+      proto pin "$tool" "$version"
+    else
+      echo "  -> Mapping & pinning custom tool via built-in ASDF backend: $tool to $version"
 
-    echo "     Installing tool environment..."
-    proto install "asdf:$tool" --yes
+      # Pin using the asdf: identifier
+      proto pin "asdf:$tool" "$version"
 
-    # -------------------------------------------------------------------------
-    # DYNAMIC SYMLINK PATCH
-    # Locates the true nested binary and links it to what proto expects ($tool)
-    # -------------------------------------------------------------------------
-    TARGET_DIR="$HOME/.proto/tools/$tool/$version"
-    
-    # If proto's expected fallback binary doesn't exist, let's find the real one
-    if [ -d "$TARGET_DIR" ] && [ ! -f "$TARGET_DIR/$tool" ]; then
-      # Look for common binary names inside the installation directory
-      # For awscli, it looks for 'aws'. For adr-tools, it looks for 'adr'.
-      SHORT_NAME=$(echo "$tool" | sed 's/-tools//' | sed 's/cli//')
-      
-      REAL_BIN=$(find "$TARGET_DIR" -type f -name "$SHORT_NAME" -perm -u+x | head -n 1)
-      
-      if [ -n "$REAL_BIN" ]; then
-        echo "     🔗 Linking nested binary to root: $(basename "$REAL_BIN") -> $tool"
-        ln -sf "$REAL_BIN" "$TARGET_DIR/$tool"
+      # Specific override for adr-tools shim naming
+      if [ "$tool" = "adr-tools" ] && ! grep -q "\[tools\.\"asdf:$tool\"\]" .prototools; then
+        echo -e "\n[tools.\"asdf:$tool\"]\nexes = [\"adr\"]" >> .prototools
+      fi
+
+      echo "     Installing tool environment..."
+      proto install "asdf:$tool" --yes
+
+      # Dynamic Symlink Patch for structural variances
+      TARGET_DIR="$HOME/.proto/tools/$tool/$version"
+      if [ -d "$TARGET_DIR" ] && [ ! -f "$TARGET_DIR/$tool" ]; then
+        SHORT_NAME=$(echo "$tool" | sed 's/-tools//' | sed 's/cli//')
+        REAL_BIN=$(find "$TARGET_DIR" -type f -name "$SHORT_NAME" -perm -u+x | head -n 1)
+
+        if [ -n "$REAL_BIN" ]; then
+          echo "     🔗 Linking nested binary to root: $(basename "$REAL_BIN") -> $tool"
+          ln -sf "$REAL_BIN" "$TARGET_DIR/$tool"
+        fi
       fi
     fi
-    # -------------------------------------------------------------------------
+  ) || {
+    # This block executes ONLY if the subshell above hits a failure command
+    echo "⚠️  Warning: Processing failed for tool '$tool'. Skipping to next tool..."
+  }
+  # -------------------------------------------------------------------------
 
-  fi
 done < .tool-versions
 
-echo "✅ Done! Your toolchain configuration is cleaned up and operational."
+echo "✅ Done! Completed scanning and processing all toolchains."
