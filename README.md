@@ -14,7 +14,7 @@ sudo cp /path/to/scripts/bin/* /usr/local/bin/
 Then make sure all copied scripts are executable:
 
 ```bash
-for f in /path/to/scripts/bin/*; do
+for f in /usr/local/bin/*; do
   sudo chmod +x "/usr/local/bin/$(basename "$f")"
 done
 ```
