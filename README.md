@@ -15,7 +15,7 @@ Then make sure all copied scripts are executable:
 
 ```bash
 for f in /usr/local/bin/*; do
-  sudo chmod +x "/usr/local/bin/$(basename "$f")"
+  sudo chmod +x "$f"
 done
 ```
 
